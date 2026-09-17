@@ -1,0 +1,332 @@
+###############################################################################
+# Location Assessment API - manual test requests
+#
+# Needs the VS Code "REST Client" extension (humao.rest-client).
+# Click "Send Request" above any request. Every request has an "Expect:" line;
+# if the response doesn't match it, that request is where the issue is.
+#
+# Start the stack first:  docker compose up --build -d
+#
+# Run the sections IN ORDER the first time: later requests reuse ids from
+# the responses of earlier ones (e.g. {{createByAddress.response.body.$.id}}).
+###############################################################################
+
+# Hit the API directly. Use http://localhost:8080 to go through nginx instead;
+# if :8000 works but :8080 doesn't, the problem is the web/nginx container.
+@baseUrl = http://localhost:8000
+
+
+###############################################################################
+# 1. IS EVERYTHING UP?  Start here when something looks wrong.
+###############################################################################
+
+### 1a. API + database health
+# Expect: 200, {"ok": true, "pending_runs": N, "oldest_pending_at": ...}
+# Connection refused      -> api container not running: docker compose ps / docker compose logs api
+# 500                     -> database problem: docker compose logs db
+# pending_runs keeps growing / oldest_pending_at is old
+#                         -> worker is dead or stuck: docker compose logs worker
+GET {{baseUrl}}/api/health
+
+
+### 1b. Which upstream data source is broken right now?
+# Calls every source live (saves nothing). Takes up to ~20s if a source hangs.
+# Expect: 200. Read "failing" - it lists the broken sources by name.
+# For each source: ok=false plus error_kind tells you why:
+#   timeout      - source too slow (limit per source in backend/app/config.py)
+#   network      - DNS failure / connection refused or reset (source down or blocked)
+#   rate_limited - HTTP 429, we are being throttled
+#   http_error   - source returned 4xx/5xx (see http_status + error_detail)
+#   bad_payload  - answered, but with HTML/garbage/implausible values
+#   no_match     - answered correctly, but has no data for this point/address
+GET {{baseUrl}}/api/diagnostics/sources
+
+
+### 1c. Same, for a location of your choice (e.g. one that failed)
+# Expect: 200. Compare with 1b: if 1b is all OK but this fails, the problem is
+# the location (no_match / outside coverage), not the source.
+GET {{baseUrl}}/api/diagnostics/sources
+    ?lat=25.7907
+    &lon=-80.1300
+    &address=1700 Convention Center Dr, Miami Beach, FL 33139
+
+
+###############################################################################
+# 2. SUBMIT  (POST /api/assessments)
+###############################################################################
+
+### 2a. Submit by address
+# Expect: 202 within milliseconds, run.status = "pending", run.score = null.
+# If this is slow, something is calling upstreams inside the request (it must not).
+# @name createByAddress
+POST {{baseUrl}}/api/assessments
+Content-Type: application/json
+
+{
+  "label": "HTTP test - Denver by address",
+  "address": "1437 Bannock St, Denver, CO 80202"
+}
+
+
+### 2b. Submit by coordinates
+# Expect: 202, run.status = "pending". No geocoder call will be made for this one.
+# @name createByCoords
+POST {{baseUrl}}/api/assessments
+Content-Type: application/json
+
+{
+  "label": "HTTP test - Phoenix by coords",
+  "lat": 33.4484,
+  "lon": -112.0740
+}
+
+
+### 2c. Submit an address that doesn't exist
+# Expect: 202 now. After a few seconds (3a with this id) the run is "failed"
+# with error "... census_geocoder no_match ...". Not a zero score.
+# The same happens for a city name on its own (e.g. "New York"): the Census
+# geocoder only matches street addresses. Use a full address or lat/lon.
+# @name createBadAddress
+POST {{baseUrl}}/api/assessments
+Content-Type: application/json
+
+{
+  "label": "HTTP test - bad address",
+  "address": "123 Nowhere Lane, Faketown, ZZ 00000"
+}
+
+
+### 2d. INVALID: no location at all
+# Expect: 422, "provide an address or a lat/lon pair"
+POST {{baseUrl}}/api/assessments
+Content-Type: application/json
+
+{ "label": "no location" }
+
+
+### 2e. INVALID: both address and coordinates
+# Expect: 422, "provide either an address or a lat/lon pair, not both"
+POST {{baseUrl}}/api/assessments
+Content-Type: application/json
+
+{ "label": "both", "address": "1 Main St", "lat": 39.7, "lon": -105 }
+
+
+### 2f. INVALID: only half a coordinate pair
+# Expect: 422, "provide both lat and lon, or neither"
+POST {{baseUrl}}/api/assessments
+Content-Type: application/json
+
+{ "label": "half pair", "lat": 39.7 }
+
+
+### 2g. INVALID: blank label
+# Expect: 422, "label must not be blank"
+POST {{baseUrl}}/api/assessments
+Content-Type: application/json
+
+{ "label": "   ", "address": "1437 Bannock St, Denver, CO 80202" }
+
+
+### 2h. INVALID: latitude out of range
+# Expect: 422, "Input should be less than or equal to 90"
+POST {{baseUrl}}/api/assessments
+Content-Type: application/json
+
+{ "label": "bad lat", "lat": 91, "lon": 0 }
+
+
+### 2i. INVALID: malformed JSON
+# Expect: 422, "JSON decode error"
+POST {{baseUrl}}/api/assessments
+Content-Type: application/json
+
+{ "label": "oops",
+
+
+###############################################################################
+# 3. DETAIL  (GET /api/assessments/{id})
+###############################################################################
+
+### 3a. Detail of the address submission (send 2a first)
+# Expect: 200. Re-send every few seconds: run.status goes
+# pending -> running -> complete | partial | failed.
+# Stuck on "pending" for > ~10s -> worker isn't running (check 1a / worker logs).
+# When finished, check:
+#   run.factors[]  - status "unavailable" must have points = null (never 0)
+#   run.fetches[]  - error_kind / error_detail say exactly which source failed and why
+#   run.verdict_reason - explains the verdict, including the score range if partial
+GET {{baseUrl}}/api/assessments/{{createByAddress.response.body.$.id}}
+
+
+### 3b. Detail of the coordinates submission (send 2b first)
+# Expect: 200. When finished, run.fetches has NO census_geocoder entry.
+GET {{baseUrl}}/api/assessments/{{createByCoords.response.body.$.id}}
+
+
+### 3c. Detail of the bad address (send 2c first, wait a few seconds)
+# Expect: 200, run.status = "failed", run.score = null, run.factors = [],
+# run.error names census_geocoder and the reason.
+GET {{baseUrl}}/api/assessments/{{createBadAddress.response.body.$.id}}
+
+
+### 3d. NOT FOUND: assessment that doesn't exist
+# Expect: 404, {"detail": "assessment not found"}
+GET {{baseUrl}}/api/assessments/999999
+
+
+### 3e. NOT FOUND: run that belongs to a different assessment
+# Expect: 404, {"detail": "run not found for this assessment"}
+GET {{baseUrl}}/api/assessments/{{createByAddress.response.body.$.id}}?run_id={{createByCoords.response.body.$.latest_run_id}}
+
+
+###############################################################################
+# 4. LIST  (GET /api/assessments)
+###############################################################################
+
+### 4a. Default list (newest first, 50 per page)
+# Expect: 200, {"items": [...], "total": N, "limit": 50, "offset": 0}
+GET {{baseUrl}}/api/assessments
+
+
+### 4b. Sort by score, highest first
+# Expect: 200. Rows with score = null (failed / pending / not enough data) come LAST.
+GET {{baseUrl}}/api/assessments?sort=score&order=desc
+
+
+### 4c. Sort by score, lowest first
+# Expect: 200. Nulls are STILL last ("no score" is not "lowest score").
+GET {{baseUrl}}/api/assessments?sort=score&order=asc
+
+
+### 4d. Only partial reports
+# Expect: 200, every item has status = "partial"
+GET {{baseUrl}}/api/assessments?status=partial
+
+
+### 4e. Several statuses at once
+# Expect: 200, every item is "failed" or "partial"
+GET {{baseUrl}}/api/assessments?status=failed&status=partial
+
+
+### 4f. Filter by effective verdict (an analyst override wins over the machine)
+# Expect: 200, every item has effective_verdict = "review"
+GET {{baseUrl}}/api/assessments?verdict=review
+
+
+### 4g. Text search on label or address
+# Expect: 200, only items whose label or address contains "HTTP test"
+GET {{baseUrl}}/api/assessments?q=HTTP test
+
+
+### 4h. Paging
+# Expect: 200, at most 2 items, offset = 2, total unchanged vs 4a
+GET {{baseUrl}}/api/assessments?limit=2&offset=2
+
+
+### 4i. INVALID: unknown sort column
+# Expect: 422, "Input should be 'created_at', 'score', 'label' or 'status'"
+GET {{baseUrl}}/api/assessments?sort=banana
+
+
+### 4j. INVALID: page size too large
+# Expect: 422, "Input should be less than or equal to 200"
+GET {{baseUrl}}/api/assessments?limit=500
+
+
+###############################################################################
+# 5. RE-RUN  (POST /api/assessments/{id}/runs)
+###############################################################################
+
+### 5a. Re-run the address assessment (wait until 3a shows it finished)
+# Expect: 202, runs[] now has one more entry; the new one is "pending",
+# the older runs are still listed underneath, unchanged.
+# 409 here means the previous run hasn't finished yet - wait and retry.
+POST {{baseUrl}}/api/assessments/{{createByAddress.response.body.$.id}}/runs
+
+
+### 5b. CONFLICT: re-run again immediately
+# Expect: 409, "a run is already in progress for this assessment"
+POST {{baseUrl}}/api/assessments/{{createByAddress.response.body.$.id}}/runs
+
+
+### 5c. View the ORIGINAL run after re-running
+# Expect: 200, run.id is the first run, with its original factors and fetches intact
+GET {{baseUrl}}/api/assessments/{{createByAddress.response.body.$.id}}?run_id={{createByAddress.response.body.$.latest_run_id}}
+
+
+### 5d. NOT FOUND: re-run an assessment that doesn't exist
+# Expect: 404
+POST {{baseUrl}}/api/assessments/999999/runs
+
+
+###############################################################################
+# 6. OVERRIDE  (POST /api/assessments/{id}/overrides)
+###############################################################################
+
+### 6a. Override the verdict
+# Expect: 201. current_override.verdict = "pursue", and run.machine_verdict /
+# run.score are UNCHANGED (the machine opinion stays visible next to the override).
+POST {{baseUrl}}/api/assessments/{{createByCoords.response.body.$.id}}/overrides
+Content-Type: application/json
+
+{
+  "verdict": "pursue",
+  "reason": "Site visit confirmed flood risk is acceptable despite FEMA data being unavailable.",
+  "analyst": "your-name"
+}
+
+
+### 6b. Override again (history is kept)
+# Expect: 201. current_override.verdict = "reject"; overrides[] has BOTH, newest first.
+POST {{baseUrl}}/api/assessments/{{createByCoords.response.body.$.id}}/overrides
+Content-Type: application/json
+
+{
+  "verdict": "reject",
+  "reason": "Landlord withdrew the offer.",
+  "analyst": "your-name"
+}
+
+
+### 6c. Check the list shows machine vs analyst verdict side by side
+# Expect: 200. The item has machine_verdict (unchanged), override_verdict = "reject",
+# effective_verdict = "reject".
+GET {{baseUrl}}/api/assessments?q=Phoenix by coords
+
+
+### 6d. INVALID: blank reason
+# Expect: 422, "reason and analyst must not be blank"
+POST {{baseUrl}}/api/assessments/{{createByCoords.response.body.$.id}}/overrides
+Content-Type: application/json
+
+{ "verdict": "pursue", "reason": "   ", "analyst": "your-name" }
+
+
+### 6e. INVALID: unknown verdict
+# Expect: 422, "Input should be 'pursue', 'review' or 'reject'"
+POST {{baseUrl}}/api/assessments/{{createByCoords.response.body.$.id}}/overrides
+Content-Type: application/json
+
+{ "verdict": "maybe", "reason": "not sure", "analyst": "your-name" }
+
+
+### 6f. INVALID: override citing another assessment's run
+# Expect: 400, "run_id does not belong to this assessment"
+POST {{baseUrl}}/api/assessments/{{createByCoords.response.body.$.id}}/overrides
+Content-Type: application/json
+
+{
+  "verdict": "review",
+  "reason": "wrong run on purpose",
+  "analyst": "your-name",
+  "run_id": {{createByAddress.response.body.$.latest_run_id}}
+}
+
+
+### 6g. NOT FOUND: override an assessment that doesn't exist
+# Expect: 404
+POST {{baseUrl}}/api/assessments/999999/overrides
+Content-Type: application/json
+
+{ "verdict": "pursue", "reason": "x", "analyst": "your-name" }

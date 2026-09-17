@@ -1,0 +1,51 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: assess
+      POSTGRES_PASSWORD: assess
+      POSTGRES_DB: assess
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/create-test-db.sql:/docker-entrypoint-initdb.d/create-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U assess -d assess"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  api:
+    build: ./backend
+    environment: &backend-env
+      DATABASE_URL: postgresql+psycopg://assess:assess@db:5432/assess
+      TEST_DATABASE_URL: postgresql+psycopg://assess:assess@db:5432/assess_test
+      # Override any of these from your shell to watch the failure path, e.g.
+      #   USGS_EPQS_URL=https://epqs.invalid docker compose up -d worker
+      CENSUS_GEOCODER_URL: ${CENSUS_GEOCODER_URL:-https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress}
+      USGS_EPQS_URL: ${USGS_EPQS_URL:-https://epqs.nationalmap.gov/v1/json}
+      OPEN_METEO_URL: ${OPEN_METEO_URL:-https://archive-api.open-meteo.com/v1/archive}
+      FEMA_NFHL_URL: ${FEMA_NFHL_URL:-https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28/query}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+
+  worker:
+    build: ./backend
+    command: ["python", "-m", "app.worker"]
+    environment: *backend-env
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build: ./frontend
+    depends_on:
+      - api
+    ports:
+      - "8080:80"
+
+volumes:
+  pgdata:

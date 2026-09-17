@@ -1,0 +1,77 @@
+###############################################################################
+# Upstream public data sources, called DIRECTLY (bypassing our backend)
+#
+# Use this when backend.http request 1b (diagnostics) says a source is failing
+# and you want to know: is the source itself down, or is it our code?
+#
+#   Fails here too          -> the upstream (or your network) is the problem.
+#   Works here, fails in 1b -> our request/parsing is the problem; compare the
+#                              "request_url" from 1b with the URL below.
+#
+# These are the same requests the worker makes, with the same User-Agent.
+# They are free public services - please don't spam them.
+###############################################################################
+
+@userAgent = location-assessment-tool/0.1 (internal prototype; contact: vishal0639@gmail.com)
+@lat = 38.8977
+@lon = -77.0365
+
+
+### US Census Geocoder - address -> coordinates
+# Expect: 200, result.addressMatches[0].coordinates = {x: lon, y: lat}
+# Empty addressMatches -> address not found (we report "no_match")
+# 502/503 -> Census is having trouble (seen during the build)
+GET https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress
+    ?address=1600 Pennsylvania Ave NW, Washington, DC 20500
+    &benchmark=Public_AR_Current
+    &vintage=Current_Current
+    &layers=Counties
+    &format=json
+User-Agent: {{userAgent}}
+
+
+### USGS Elevation Point Query Service - elevation in feet
+# Expect: 200, {"value": 60.36, ...}
+# value = -1000000 or null -> no data at this point (we report "no_match")
+GET https://epqs.nationalmap.gov/v1/json
+    ?x={{lon}}
+    &y={{lat}}
+    &wkid=4326
+    &units=Feet
+    &includeDate=false
+User-Agent: {{userAgent}}
+
+
+### Open-Meteo historical archive - last full year of daily weather
+# Expect: 200, daily.temperature_2m_max and daily.precipitation_sum with 365 values
+# {"error": true, "reason": ...} -> bad parameters (e.g. date range)
+GET https://archive-api.open-meteo.com/v1/archive
+    ?latitude={{lat}}
+    &longitude={{lon}}
+    &start_date=2025-01-01
+    &end_date=2025-12-31
+    &daily=temperature_2m_max,precipitation_sum
+    &timezone=UTC
+User-Agent: {{userAgent}}
+
+
+### FEMA National Flood Hazard Layer - flood zone at a point
+# Expect: 200, features[0].attributes = {FLD_ZONE: "X", ZONE_SUBTY: ..., SFHA_TF: "F"}
+# 200 with {"error": {...}} -> ArcGIS failure disguised as success (we report "bad_payload")
+# Empty features -> area not mapped (we report "no_match")
+# Connection reset / timeout -> FEMA unreachable (what happened all day during the build)
+GET https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28/query
+    ?geometry={{lon}},{{lat}}
+    &geometryType=esriGeometryPoint
+    &inSR=4326
+    &spatialRel=esriSpatialRelIntersects
+    &outFields=FLD_ZONE,ZONE_SUBTY,SFHA_TF
+    &returnGeometry=false
+    &f=json
+User-Agent: {{userAgent}}
+
+
+### FEMA service root - is the FEMA server reachable at all?
+# Expect: 200 with service metadata. If even this fails, FEMA (or the route to it) is down.
+GET https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer?f=json
+User-Agent: {{userAgent}}
