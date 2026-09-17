@@ -193,4 +193,4 @@ Stack choices: **FastAPI** (the brief's preference). **SQLAlchemy 2 + psycopg 3*
 
 ## Time spent
 
-> **TODO (candidate): fill in your actual time.** The brief compares what was built against the time reported, so this has to be accurate.
+> **TODO (candidate): fill in your actual time.** I have spent almost 4 hrs building doing intial set up reading the requirements and adding the features and testing them and making necessary changes wherever required
