@@ -1,0 +1,49 @@
+/* Deliberately minimal: legibility and unmistakable status colours, nothing more. */
+body { font-family: system-ui, sans-serif; margin: 0; color: #222; background: #fafafa; }
+header { background: #223; padding: 10px 20px; }
+header a { color: white; font-weight: 600; text-decoration: none; }
+main { padding: 16px 20px; max-width: 1300px; }
+h1 { margin-bottom: 4px; }
+table { border-collapse: collapse; width: 100%; background: white; }
+th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; vertical-align: top; }
+th { background: #eee; }
+th.sortable { cursor: pointer; }
+input, select, textarea, button { font: inherit; padding: 4px 6px; }
+label { display: inline-flex; gap: 4px; align-items: center; }
+.row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+.grow { flex: 1; }
+.grow input { flex: 1; }
+.card { background: white; border: 1px solid #ddd; padding: 12px 16px; margin-bottom: 16px; }
+.panels { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.filters { display: flex; gap: 8px; margin-bottom: 8px; }
+.pager { display: flex; gap: 12px; align-items: center; margin: 8px 0; }
+.muted { color: #777; }
+.small { font-size: 0.85em; }
+.big { font-size: 2em; margin: 4px 0; }
+.error { color: #b00020; }
+.ok { color: #1b5e20; }
+.scroll { overflow-x: auto; }
+pre { max-height: 300px; overflow: auto; font-size: 0.8em; }
+code { font-size: 0.85em; word-break: break-all; }
+blockquote { margin: 4px 0; padding-left: 8px; border-left: 3px solid #ccc; white-space: pre-wrap; }
+textarea { width: 100%; box-sizing: border-box; }
+.override-form { border-top: 1px solid #eee; margin-top: 12px; }
+.history li { margin-bottom: 8px; }
+
+.badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 0.85em; background: #eee; }
+.status-complete { background: #c8e6c9; }
+.status-partial { background: #ffe082; font-weight: 600; }
+.status-failed { background: #ffcdd2; }
+.status-pending, .status-running { background: #bbdefb; }
+.verdict-pursue { background: #c8e6c9; }
+.verdict-review { background: #fff3c4; }
+.verdict-reject { background: #ffcdd2; }
+.partial-mark { color: #9a6700; font-weight: 600; font-size: 0.8em; }
+
+.banner { padding: 8px 12px; border: 1px solid; margin: 12px 0; }
+.banner ul { margin: 4px 0; }
+.banner.info { background: #e3f2fd; border-color: #90caf9; }
+.banner.warn { background: #fff8e1; border-color: #ffb300; }
+.banner.bad { background: #ffebee; border-color: #e57373; }
+.banner.good { background: #e8f5e9; border-color: #81c784; }
+tr.unavailable td { background: #fff8e1; }
