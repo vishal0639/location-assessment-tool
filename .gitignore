@@ -1,0 +1,11 @@
+node_modules/
+dist/
+__pycache__/
+.pytest_cache/
+.venv/
+*.pyc
+.env
+*.tsbuildinfo
+
+# private interview notes - not part of the submission
+overview.md
